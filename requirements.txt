@@ -1,0 +1,10 @@
+nibabel
+templateflow
+scipy
+numpy
+numba
+msgpack
+msgpack_numpy
+matplotlib
+scikit-optimize
+dlib
