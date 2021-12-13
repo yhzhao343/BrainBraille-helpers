@@ -9,6 +9,6 @@ setup(
   author='Yuhui Zhao',
   author_email='yhzhao343@gmail.com',
   url='https://github.com/yhzhao343/brainbraille_helpers',
-  packages=['brainbraille_helpers'],
-  package_dir={'': '..'}
+  package_dir={'': 'src'},
+  packages=find_packages(where='src')
 )
