@@ -7,4 +7,5 @@ msgpack
 msgpack_numpy
 matplotlib
 scikit-optimize
+connected-components-3d
 dlib
