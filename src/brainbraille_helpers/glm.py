@@ -991,8 +991,10 @@ def prepare_bold_info(input_bold_path, input_event_path, atlas='HOCPAL', desc='t
     'b': 'mask_image',
     'f_l': 'mask_image',
     'f_r': 'mask_image',
-    'h_l': 'right_mask_image',
-    'h_r': 'left_mask_image',
+    # 'h_l': 'right_mask_image',
+    # 'h_r': 'left_mask_image',
+    'h_l': 'mask_image',
+    'h_r': 'mask_image',
     't': 'mask_image'
   }
   processed_bold_info = prep_bold_info(bold_info)
