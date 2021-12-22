@@ -507,7 +507,8 @@ class SVMProbDecoder():
     self.LETTERS_TO_DOT = LETTERS_TO_DOT
     self.region_order = region_order
     self.DOT_TO_LETTERS = { ''.join([str(val[r]) for r in self.region_order]): key for key, val in self.LETTERS_TO_DOT.items()}
-    self.SVM_params = SVM_params
+    self.SVM_params = [SVM_params] * len(region_order)
+    self.clfs = [None] * len(region_order)
     self.add_bigram_dict(bigram_dict)
     self.words_node_symbols = words_node_symbols
     self.words_link_start_end = words_link_start_end
@@ -541,7 +542,7 @@ class SVMProbDecoder():
       self.bigram_dict = None
       self.bigram_log_dict = None
 
-  def fit(self, X, y=None):
+  def fit(self, X, y=None, r_i=None):
     # transition_label = self.letter_label_to_transition_label(y)
     transition_label = letter_label_to_transition_label(y, self.LETTERS_TO_DOT, self.region_order)
     transition_label = np.array([entry for run in transition_label for entry in run])
@@ -555,19 +556,27 @@ class SVMProbDecoder():
         clf.set_params(**SVM_params)
       clf.fit(X, y_label)
       return clf
-    self.clfs = Parallel(n_jobs=-1)(delayed(fit_svm_for_one_region)(X_expanded, transition_label[:, i], self.SVM_params) for i in range(len(self.region_order)))
-    # self.clfs = [fit_svm_for_one_region(X_expanded, train_transition_label[:, i], SVM_params) for i in range(len(self.region_order))]
+
+    if r_i is None:
+      self.clfs = Parallel(n_jobs=-1)(delayed(fit_svm_for_one_region)(X_expanded, transition_label[:, i], self.SVM_params[i]) for i in range(len(self.region_order)))
+      # self.clfs = [fit_svm_for_one_region(X_expanded, train_transition_label[:, i], SVM_params) for i in range(len(self.region_order))]
+    else:
+      self.clfs[r_i] = fit_svm_for_one_region(X_expanded, transition_label[:, r_i], self.SVM_params[r_i])
     return self
 
-  def predict_svm_proba(self, X):
+  def predict_svm_proba(self, X, r_i = None):
     X = np.array(X)
     X_each_run_len = [len(x_i) for x_i in X]
     X_each_run_start_end = [(end - X_each_run_len[j] , end) for j, end in enumerate([np.sum(X_each_run_len[: (i + 1)]) for i in range(len(X_each_run_len))])]
     X = np.array([e_i for x_i in X for e_i in x_i])
     num_entry, num_timeframe, num_region = X.shape
     X_expanded = X.reshape((num_entry, num_timeframe * num_region))
-    prob_flatten = np.array(Parallel(n_jobs=-1)(delayed(clf_pred_proba)(clf_i, X_expanded) for clf_i in self.clfs))
-    prob = [prob_flatten[:, start:end] for start, end in X_each_run_start_end]
+    if r_i is None:
+      prob_flatten = np.array(Parallel(n_jobs=-1)(delayed(clf_pred_proba)(clf_i, X_expanded) for clf_i in self.clfs))
+      prob = [prob_flatten[:, start:end] for start, end in X_each_run_start_end]
+    else:
+      prob_flatten = clf_pred_proba(self.clfs[r_i], X_expanded)
+      prob = [prob_flatten[start:end] for start, end in X_each_run_start_end]
     return prob
 
   def predict_svm_transition(self, X):
@@ -575,9 +584,9 @@ class SVMProbDecoder():
     trans_class = [[{r: np.argmax(prob_each_r[i]) for i, r in enumerate(self.region_order)} for prob_each_r in zip(*run_i)] for run_i in prob]
     return trans_class
 
-  def predict(self, X, svm_proba = False, svm_transition=False, bigram_dict = None, words_node_symbols = None, words_link_start_end = None, words_dictionary = None, insertion_penalty = None, token_label=True):
+  def predict(self, X, r_i=None, svm_proba = False, svm_transition=False, bigram_dict = None, words_node_symbols = None, words_link_start_end = None, words_dictionary = None, insertion_penalty = None, token_label=True):
     if svm_proba:
-      return self.predict_svm_proba(X)
+      return self.predict_svm_proba(X, r_i)
     if svm_transition:
       return self.predict_svm_transition(X)
     X = np.array(X)
@@ -677,8 +686,8 @@ class SVMandInsertionPenaltyTunedSVMProbDecoder():
   def fit(self, X, y):
     previous_n_splits = self.n_splits
     if self.n_splits is None:
-      # self.n_splits = int(len(X)/2)
-      self.n_splits = len(X)
+      self.n_splits = int(len(X)/2)
+      # self.n_splits = len(X)
     kf = KFold(n_splits=self.n_splits, random_state=self.random_state, shuffle=True)
     cv_decoders = [copy.deepcopy(self.decoder) for i in range(self.n_splits)]
     x_test_all = []
@@ -720,35 +729,35 @@ class SVMandInsertionPenaltyTunedSVMProbDecoder():
     x_train_all = self.x_train_all
     y_train_all = self.y_train_all
     cv_decoders = self.cv_decoders
+    region_order = self.decoder.steps[-1][1].region_order
 
-    def SVM_cost(c_power, gamma_power):
-      c = 10 ** c_power
-      gamma = 0.1 ** gamma_power
-      overall_accuracy_per_run = np.zeros(self.n_splits)
+    def tune_SVM_for_r_i(r_i):
+      def SVM_cost(c_power, gamma_power):
+        c = 10 ** c_power
+        gamma = 0.1 ** gamma_power
 
-      def calculate_SVM_run_i_accuracy(x_train, y_train, x_test, y_test, decoder):
-        decoder.steps[-1][1].SVM_params = {'C': c, 'gamma':gamma}
-        region_order = decoder.steps[-1][1].region_order
-        LETTERS_TO_DOT = decoder.steps[-1][1].LETTERS_TO_DOT
-        decoder.fit(x_train, y_train)
-        prob = decoder.predict(x_test, svm_proba = True)
-        y_pred_trans_class = [[{r: np.argmax(prob_each_r[i]) for i, r in enumerate(region_order)} for prob_each_r in zip(*run_i)] for run_i in prob]
-        y_test_label_by_type = letter_label_to_transition_label(y_test, LETTERS_TO_DOT, region_order)
-        accuracies = np.zeros(len(region_order))
-        for i, r in enumerate(region_order):
-          pred_y_r = [item[r] for run_i in y_pred_trans_class for item in run_i]
-          label_r = [item[i] for run_i in y_test_label_by_type for item in run_i]
-          accuracies[i] = accuracy_score(label_r, pred_y_r)
-        # print(accuracies)
-        return np.mean(accuracies)
+        def calculate_SVM_run_i_accuracy(x_train, y_train, x_test, y_test, decoder):
+          decoder.steps[-1][1].SVM_params[r_i] = {'C': c, 'gamma':gamma}
+          region_order = decoder.steps[-1][1].region_order
+          LETTERS_TO_DOT = decoder.steps[-1][1].LETTERS_TO_DOT
+          decoder.fit(x_train, y_train)
+          prob = decoder.predict(x_test, svm_proba = True, r_i = r_i)
+          y_pred_trans_class = np.array([np.argmax(run_i, axis=1) for run_i in prob])
+          y_test_label_by_type = [[item[r_i] for item in run_i] for run_i in letter_label_to_transition_label(y_test, LETTERS_TO_DOT, region_order)]
+          accuracy = accuracy_score([item for run_i in y_test_label_by_type for item in run_i], [item for run_i in y_pred_trans_class for item in run_i])
+          return accuracy
+        acc_all_run = Parallel(n_jobs=-1)(delayed(calculate_SVM_run_i_accuracy) (x_train, y_train, x_test, y_test, decoder) for x_train, y_train, x_test, y_test, decoder in zip(x_train_all, y_train_all, x_test_all, y_test_all, cv_decoders) )
+        # acc_all_run = [calculate_SVM_run_i_accuracy(x_train, y_train, x_test, y_test, decoder) for x_train, y_train, x_test, y_test, decoder in zip(x_train_all, y_train_all, x_test_all, y_test_all, cv_decoders)]
+        return -np.mean(acc_all_run)
+      res = dlib.find_min_global(SVM_cost, [self.C_power_range[0], self.gamma_power_range[0]], [self.C_power_range[1], self.gamma_power_range[1]], self.SVM_n_calls)
+      return res
+    svm_params_res = Parallel(n_jobs=-1)(delayed(tune_SVM_for_r_i)(i) for i in range(len(region_order)) )
 
-      acc_all_run = Parallel(n_jobs=-1)(delayed(calculate_SVM_run_i_accuracy) (x_train, y_train, x_test, y_test, decoder) for x_train, y_train, x_test, y_test, decoder in zip(x_train_all, y_train_all, x_test_all, y_test_all, cv_decoders) )
-      return -np.mean(acc_all_run)
-    res = dlib.find_min_global(SVM_cost, [self.C_power_range[0], self.gamma_power_range[0]], [self.C_power_range[1], self.gamma_power_range[1]], self.SVM_n_calls)
-    SVM_params = {'C': 10 ** res[0][0], 'gamma': 0.1 ** res[0][1]}
+    # raise Exception('exit!')
+    SVM_params = [{'C': 10 ** res[0][0], 'gamma': 0.1 ** res[0][1]} for res in svm_params_res]
+    print([(res[1], param) for res, param in zip(svm_params_res, SVM_params)])
     self.best_SVM_params = SVM_params
     self.decoder.steps[-1][1].SVM_params = SVM_params
-    print(SVM_params)
     for decoder in cv_decoders:
       decoder.steps[-1][1].SVM_params = SVM_params
     def fit_each_fold_decoder(x_train, y_train, decoder):
