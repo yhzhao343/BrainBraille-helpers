@@ -673,7 +673,7 @@ class SVMProbDecoder():
     return latest_results
 
 class SVMandInsertionPenaltyTunedSVMProbDecoder():
-  def __init__(self, decoder, C_power_range=(0, 4), gamma_power_range=(0, 4), random_state=42, insertion_penalty_range=(-20, 0), n_splits = None, SVM_n_calls = 16, insertion_n_calls=16):
+  def __init__(self, decoder, each_fold_n_jobs=5, C_power_range=(0, 3), gamma_power_range=(0, 3), random_state=42, insertion_penalty_range=(-20, 0), n_splits = None, SVM_n_calls = 16, insertion_n_calls=16):
     self.decoder = decoder
     self.C_power_range = C_power_range
     self.gamma_power_range = gamma_power_range
@@ -682,6 +682,7 @@ class SVMandInsertionPenaltyTunedSVMProbDecoder():
     self.n_splits = n_splits
     self.insertion_n_calls = insertion_n_calls
     self.SVM_n_calls = SVM_n_calls
+    self.each_fold_n_jobs = each_fold_n_jobs
 
   def fit(self, X, y):
     previous_n_splits = self.n_splits
@@ -746,7 +747,7 @@ class SVMandInsertionPenaltyTunedSVMProbDecoder():
           y_test_label_by_type = [[item[r_i] for item in run_i] for run_i in letter_label_to_transition_label(y_test, LETTERS_TO_DOT, region_order)]
           accuracy = accuracy_score([item for run_i in y_test_label_by_type for item in run_i], [item for run_i in y_pred_trans_class for item in run_i])
           return accuracy
-        acc_all_run = Parallel(n_jobs=-1)(delayed(calculate_SVM_run_i_accuracy) (x_train, y_train, x_test, y_test, decoder) for x_train, y_train, x_test, y_test, decoder in zip(x_train_all, y_train_all, x_test_all, y_test_all, cv_decoders) )
+        acc_all_run = Parallel(n_jobs=self.each_fold_n_jobs)(delayed(calculate_SVM_run_i_accuracy) (x_train, y_train, x_test, y_test, decoder) for x_train, y_train, x_test, y_test, decoder in zip(x_train_all, y_train_all, x_test_all, y_test_all, cv_decoders) )
         # acc_all_run = [calculate_SVM_run_i_accuracy(x_train, y_train, x_test, y_test, decoder) for x_train, y_train, x_test, y_test, decoder in zip(x_train_all, y_train_all, x_test_all, y_test_all, cv_decoders)]
         return -np.mean(acc_all_run)
       res = dlib.find_min_global(SVM_cost, [self.C_power_range[0], self.gamma_power_range[0]], [self.C_power_range[1], self.gamma_power_range[1]], self.SVM_n_calls)
