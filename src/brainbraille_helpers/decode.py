@@ -507,7 +507,7 @@ class SVMProbDecoder():
     self.LETTERS_TO_DOT = LETTERS_TO_DOT
     self.region_order = region_order
     self.DOT_TO_LETTERS = { ''.join([str(val[r]) for r in self.region_order]): key for key, val in self.LETTERS_TO_DOT.items()}
-    self.SVM_params = SVM_params
+    self.SVM_params = [SVM_params] * len(region_order)
     self.add_bigram_dict(bigram_dict)
     self.words_node_symbols = words_node_symbols
     self.words_link_start_end = words_link_start_end
@@ -541,7 +541,7 @@ class SVMProbDecoder():
       self.bigram_dict = None
       self.bigram_log_dict = None
 
-  def fit(self, X, y=None):
+  def fit(self, X, y=None, r_i=None):
     # transition_label = self.letter_label_to_transition_label(y)
     transition_label = letter_label_to_transition_label(y, self.LETTERS_TO_DOT, self.region_order)
     transition_label = np.array([entry for run in transition_label for entry in run])
@@ -555,7 +555,11 @@ class SVMProbDecoder():
         clf.set_params(**SVM_params)
       clf.fit(X, y_label)
       return clf
-    self.clfs = Parallel(n_jobs=-1)(delayed(fit_svm_for_one_region)(X_expanded, transition_label[:, i], self.SVM_params) for i in range(len(self.region_order)))
+    if r_i is None:
+      self.clfs = Parallel(n_jobs=-1)(delayed(fit_svm_for_one_region)(X_expanded, transition_label[:, i], self.SVM_params) for i in range(len(self.region_order)))
+    else:
+      self.clfs = [None] * len(self.region_order)
+      self.clfs[r_i] = fit_svm_for_one_region(X_expanded, transition_label[:, r_i], self.SVM_params)
     # self.clfs = [fit_svm_for_one_region(X_expanded, train_transition_label[:, i], SVM_params) for i in range(len(self.region_order))]
     return self
 
