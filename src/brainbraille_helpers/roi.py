@@ -5,17 +5,15 @@ import nibabel as nib
 from itertools import combinations
 
 def connected_component_clean(activation_mask, discard_size_ratio = 0.5):
-  cleaned_activation_mask = np.zeros(activation_mask.shape)
-  activation_mask_cc = cc3d.connected_components(activation_mask)
-  components_list = np.unique(activation_mask_cc)[1:]
-  mask_sizes = np.array([np.sum(activation_mask_cc == c) for c in components_list])
+  cleaned_activation_mask = np.zeros(activation_mask.shape, dtype=bool)
+  activation_mask_cc, N = cc3d.connected_components(activation_mask, return_N=True)
+  components_list = range(1, N+1)
+  mask_sizes = [np.count_nonzero(activation_mask_cc == c) for c in components_list]
   max_mask_size = np.max(mask_sizes)
   discard_size_threshold = int(max_mask_size * discard_size_ratio)
-  # print([ np.sum(activation_mask_cc == c) for c in components_list ])
-  for c in components_list:
-    component_mask = (activation_mask_cc == c)
-    c_component_size = np.sum(component_mask)
+  for c, c_component_size in zip(components_list, mask_sizes):
     if c_component_size > discard_size_threshold:
+      component_mask = (activation_mask_cc == c)
       cleaned_activation_mask = np.logical_or(cleaned_activation_mask, component_mask)
   return cleaned_activation_mask
 
