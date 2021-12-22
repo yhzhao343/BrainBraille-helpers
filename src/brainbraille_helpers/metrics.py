@@ -140,9 +140,9 @@ def hresult_style_pprint(label, minimum_edit_dist_result, confusion_mat, labels,
   # print(np.sum(confusion_mat[:-1][:-1]), hit + substitute)
   for i in range(len_labels):
     label_i = labels[i]
-    row_sum = np.sum(confusion_mat[i, 0:-1])
-    c = np.sum(confusion_mat[i][i])/row_sum if row_sum > 0 else float('nan')
-    e = (np.sum(confusion_mat[i, :-1]) - confusion_mat[i][i]) / len(label)
+    row_sum = np.count_nonzero(confusion_mat[i, 0:-1])
+    c = np.count_nonzero(confusion_mat[i][i])/row_sum if row_sum > 0 else float('nan')
+    e = (np.count_nonzero(confusion_mat[i, :-1]) - confusion_mat[i][i]) / len(label)
     matrix_line = (label_i.rjust(max_label_len))[:max_label_len] + ''.join([f'{n}'.rjust(len_spacing + 1) for n in confusion_mat[i][0:-1]]) + f'{confusion_mat[i][-1]}'.rjust(len_del_spacing + len_spacing)
     if (not np.isnan(c)) and (c < 1) and ((c > 0) or (e > 0)):
       matrix_line += ' [' + f'{c*100:.1f}'.ljust(4) + '/' + f'{e*100:.1f}'.rjust(4) + ']'

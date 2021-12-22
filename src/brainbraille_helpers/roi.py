@@ -78,7 +78,7 @@ def get_base_calibration_roi(roi_mask, motor_mask):
   return base_calibration_mask
 
 def get_aggregated_roi(roi_masks, aggregation_threshold_quantile = 0.8, cc_discard_size_ratio = 0.5, no_overlap = True, no_overlap_tilL_n = 6):
-  roi_votes = np.sum(roi_masks, axis=0)
+  roi_votes = np.count_nonzero(roi_masks, axis=0)
   threshold = np.array([np.quantile(roi_votes[:, :, :, r_i][roi_votes[:, :, :, r_i] > 0], aggregation_threshold_quantile) for r_i in range(roi_votes.shape[-1])])
   roi_mask = np.stack([connected_component_clean(roi_votes[:, :, :, r_i] >= th_i, cc_discard_size_ratio) for r_i, th_i in enumerate(threshold)], axis=-1)
   # print(roi_mask.shape)
