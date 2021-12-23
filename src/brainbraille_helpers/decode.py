@@ -508,7 +508,7 @@ def letter_label_to_transition_label(y, LETTERS_TO_DOT, region_order):
     return transition_label
 
 class SVMProbDecoder():
-  def __init__(self, LETTERS_TO_DOT, region_order, bigram_dict = None, words_node_symbols = None, words_link_start_end = None, words_dictionary = None, SVM_params=None, insertion_penalty=0.0):
+  def __init__(self, LETTERS_TO_DOT, region_order, bigram_dict = None, words_node_symbols = None, words_link_start_end = None, words_dictionary = None, SVM_params = None, insertion_penalty = 0.0, SVC_cache_size_MB = 2000):
     self.LETTERS_TO_DOT = LETTERS_TO_DOT
     self.region_order = region_order
     self.DOT_TO_LETTERS = { ''.join([str(val[r]) for r in self.region_order]): key for key, val in self.LETTERS_TO_DOT.items()}
@@ -519,6 +519,7 @@ class SVMProbDecoder():
     self.words_link_start_end = words_link_start_end
     self.words_dictionary = words_dictionary
     self.insertion_penalty = insertion_penalty
+    self.SVC_cache_size_MB = SVC_cache_size_MB
     self.trans_prob_by_type = None
     self.trans_class = None
     self.trans_class_by_type = None
@@ -556,7 +557,7 @@ class SVMProbDecoder():
     X_expanded = X.reshape((num_entry, num_timeframe * num_region))
 
     def fit_svm_for_one_region(X, y_label, SVM_params):
-      clf = SVC(kernel='rbf', probability=True, break_ties=True)
+      clf = SVC(kernel='rbf', probability=True, break_ties=True, cache_size=self.SVC_cache_size_MB)
       if SVM_params is not None:
         clf.set_params(**SVM_params)
       clf.fit(X, y_label)
