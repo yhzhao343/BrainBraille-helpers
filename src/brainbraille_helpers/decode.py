@@ -331,8 +331,8 @@ def letter_level_bigram_viterbi_decode(letter_probs, bigram_log_prob_dict):
   default_prob = np.min(all_prob_vals[all_prob_vals < 0])
   # bigram_log_prob_dict = {l: defaultdict(lambda: default_prob, bigram_log_prob_dict[l]) for l in letter_list}
   # transition_log_prob_matrix = np.array([[bigram_log_prob_dict[prev_l][l] for l in letter_list] for prev_l in letter_list ])
-  transition_log_prob_matrix = np.array([[bigram_log_prob_dict[prev_l][l] if l in bigram_log_prob_dict[prev_l] else default_prob for l in letter_list] for prev_l in letter_list ])
-  log_prob_table = np.log10( np.array([[l_prob[l] for l in letter_list] for l_prob in letter_probs]) ).T
+  transition_log_prob_matrix = np.array([[bigram_log_prob_dict[prev_l][l] if l in bigram_log_prob_dict[prev_l] else default_prob for l in letter_list] for prev_l in letter_list ], np.float64)
+  log_prob_table = np.log10( np.array([[l_prob[l] for l in letter_list] for l_prob in letter_probs]) ).T.astype(np.float64)
   prev_table = np.zeros((log_prob_table.shape[0], log_prob_table.shape[1]-1), dtype=np.int32)
   emission_log_prob_table = np.zeros(log_prob_table.shape)
   emission_log_prob_table[:, 0] = log_prob_table[:, 0]
@@ -366,7 +366,7 @@ def letter_bigram_viterbi_with_grammar_decode(letter_probs, bigram_log_prob_dict
   node_letters_ind_spelling = np.array([np.array([letter_to_ind[l] for l in node_i], dtype=np.int32) for node_i in node_letters_spelling], dtype=object)
   node_letters_ind_first_letter = np.array([letter_to_ind[node[0]] if len(node) > 0 else len(letter_list) for node in node_letters_spelling], dtype=np.int32)
   node_letters_ind_last_letter = np.array([letter_to_ind[node[-1]] if len(node) > 0 else len(letter_list) for node in node_letters_spelling], dtype=np.int32)
-  node_letters_len = np.array([len(spell) for spell in node_letters_spelling])
+  node_letters_len = np.array([len(spell) for spell in node_letters_spelling], dtype=np.int32)
   non_end_null_node_mask = node_letters_len == 0
   # print(node_letters_spelling)
 
@@ -381,13 +381,12 @@ def letter_bigram_viterbi_with_grammar_decode(letter_probs, bigram_log_prob_dict
   emission_word_log_prob_table = np.ones((number_of_symbols, num_entry)) * -np.inf
   # Initialize to invalid states to expose error in debugging
   prev_word_table = np.ones((number_of_symbols, num_entry), dtype=np.int32) * number_of_symbols
-  # Table that records and updates all rechability of an entry by the symbol
 
   all_prob_vals = np.array([val for dict_i in bigram_log_prob_dict.values() for val in dict_i.values()])
   default_prob = np.min(all_prob_vals[all_prob_vals < 0])
   transition_log_prob_matrix = np.array([[bigram_log_prob_dict[prev_l][l] if l in bigram_log_prob_dict[prev_l] else default_prob for l in letter_list] for prev_l in letter_list ])
-  log_prob_table = np.log10( np.array([[l_prob[l] for l in letter_list] for l_prob in letter_probs]) ).T
-  letter_list_array = np.ones((len(letter_list), 1))
+  log_prob_table = np.log10( np.array([[l_prob[l] for l in letter_list] for l_prob in letter_probs]) ).T.astype(np.float64)
+  # letter_list_array = np.ones((len(letter_list), 1))
 
   grammar_node_transition_table = np.zeros((number_of_symbols, number_of_symbols), dtype=bool)
   # grammar_node_reverse_transition_table = np.zeros((number_of_symbols, number_of_symbols), dtype=bool)
@@ -497,6 +496,9 @@ def letter_bigram_viterbi_with_grammar_decode(letter_probs, bigram_log_prob_dict
 def clf_pred_proba(clf, X):
   return clf.predict_proba(X)
 
+def clf_pred(clf, X):
+  return clf.predict(X)
+
 def letter_label_to_transition_label_by_type(y, LETTERS_TO_DOT, region_order):
     dot_label = [[[LETTERS_TO_DOT[l_i][region] for region in region_order] for l_i in run_i] for run_i in y]
     transition_label_by_type = [{r:  [ prev[i] * 2 + curr[i] for prev, curr in zip(run_i[0:-1], run_i[1:])] for i, r in enumerate(region_order)} for run_i in dot_label]
@@ -539,6 +541,7 @@ class SVMProbDecoder():
     self.bigram_weighted_letter_label = None
     self.letter_viterbi_decode_letter_label = None
     self.X_cache = None
+    self.probability = False
 
   def add_bigram_dict(self, bigram_dict):
     if bigram_dict is not None:
@@ -548,8 +551,9 @@ class SVMProbDecoder():
       self.bigram_dict = None
       self.bigram_log_dict = None
 
-  def fit(self, X, y=None, r_i=None):
+  def fit(self, X, y=None, r_i=None, probability=True):
     # transition_label = self.letter_label_to_transition_label(y)
+    self.probability = probability
     transition_label = letter_label_to_transition_label(y, self.LETTERS_TO_DOT, self.region_order)
     transition_label = np.array([entry for run in transition_label for entry in run])
     X = np.array([entry_i for run_i in X for entry_i in run_i])
@@ -557,7 +561,7 @@ class SVMProbDecoder():
     X_expanded = X.reshape((num_entry, num_timeframe * num_region))
 
     def fit_svm_for_one_region(X, y_label, SVM_params):
-      clf = SVC(kernel='rbf', probability=True, break_ties=True, cache_size=self.SVC_cache_size_MB)
+      clf = SVC(kernel='rbf', probability=probability, break_ties=True, cache_size=self.SVC_cache_size_MB)
       if SVM_params is not None:
         clf.set_params(**SVM_params)
       clf.fit(X, y_label)
@@ -570,7 +574,8 @@ class SVMProbDecoder():
       self.clfs[r_i] = fit_svm_for_one_region(X_expanded, transition_label[:, r_i], self.SVM_params[r_i])
     return self
 
-  def predict_svm_proba(self, X, r_i = None):
+  def svm_predict(self, X, r_i = None, probability=False):
+    pred_func = clf_pred_proba if probability else clf_pred
     X = np.array(X)
     X_each_run_len = [len(x_i) for x_i in X]
     X_each_run_start_end = [(end - X_each_run_len[j] , end) for j, end in enumerate([np.sum(X_each_run_len[: (i + 1)]) for i in range(len(X_each_run_len))])]
@@ -578,23 +583,29 @@ class SVMProbDecoder():
     num_entry, num_timeframe, num_region = X.shape
     X_expanded = X.reshape((num_entry, num_timeframe * num_region))
     if r_i is None:
-      prob_flatten = np.array(Parallel(n_jobs=-1)(delayed(clf_pred_proba)(clf_i, X_expanded) for clf_i in self.clfs))
-      prob = [prob_flatten[:, start:end] for start, end in X_each_run_start_end]
+      res_flatten = np.array(Parallel(n_jobs=-1)(delayed(pred_func)(clf_i, X_expanded) for clf_i in self.clfs))
+      res = [res_flatten[:, start:end] for start, end in X_each_run_start_end]
     else:
-      prob_flatten = clf_pred_proba(self.clfs[r_i], X_expanded)
-      prob = [prob_flatten[start:end] for start, end in X_each_run_start_end]
-    return prob
+      res_flatten = pred_func(self.clfs[r_i], X_expanded)
+      res = [res_flatten[start:end] for start, end in X_each_run_start_end]
+    return res
 
-  def predict_svm_transition(self, X):
-    prob = self.predict_svm_proba(X)
-    trans_class = [[{r: np.argmax(prob_each_r[i]) for i, r in enumerate(self.region_order)} for prob_each_r in zip(*run_i)] for run_i in prob]
+  def predict_svm_transition(self, X, r_i=None, probability=False):
+    res = self.svm_predict(X, r_i, probability)
+    if probability:
+      if r_i is None:
+        trans_class = [[{r: np.argmax(prob_each_r[i]) for i, r in enumerate(self.region_order)} for prob_each_r in zip(*run_i)] for run_i in res]
+      else:
+        trans_class = np.array([np.argmax(run_i, axis=1) for run_i in res])
+    else:
+      trans_class = res
     return trans_class
 
-  def predict(self, X, r_i=None, svm_proba = False, svm_transition=False, bigram_dict = None, words_node_symbols = None, words_link_start_end = None, words_dictionary = None, insertion_penalty = None, token_label=True):
-    if svm_proba:
-      return self.predict_svm_proba(X, r_i)
+  def predict(self, X, r_i=None, svm_predict = False, svm_transition=False, bigram_dict = None, words_node_symbols = None, words_link_start_end = None, words_dictionary = None, insertion_penalty = None, token_label=True):
+    if svm_predict:
+      return self.svm_predict(X, r_i, self.probability)
     if svm_transition:
-      return self.predict_svm_transition(X)
+      return self.predict_svm_transition(X, r_i, self.probability)
     X = np.array(X)
     if insertion_penalty is None:
       insertion_penalty = self.insertion_penalty
@@ -679,7 +690,7 @@ class SVMProbDecoder():
     return latest_results
 
 class SVMandInsertionPenaltyTunedSVMProbDecoder():
-  def __init__(self, decoder, each_fold_n_jobs=5, C_power_range=(0, 3), gamma_power_range=(0, 3), random_state=42, insertion_penalty_range=(-20, 0), n_splits = None, SVM_n_calls = 16, insertion_n_calls=16):
+  def __init__(self, decoder, each_fold_n_jobs=5, C_power_range=(0, 3), gamma_power_range=(0, 3), random_state=42, insertion_penalty_range=(-20, 0), n_splits = None, SVM_n_calls = 16, insertion_n_calls = 16, tune_gamma = True, tune_without_probability=True):
     self.decoder = decoder
     self.C_power_range = C_power_range
     self.gamma_power_range = gamma_power_range
@@ -689,12 +700,14 @@ class SVMandInsertionPenaltyTunedSVMProbDecoder():
     self.insertion_n_calls = insertion_n_calls
     self.SVM_n_calls = SVM_n_calls
     self.each_fold_n_jobs = each_fold_n_jobs
+    self.tune_gamma = tune_gamma
+    self.tune_without_probability = tune_without_probability
 
   def fit(self, X, y):
     previous_n_splits = self.n_splits
     if self.n_splits is None:
-      self.n_splits = int(len(X)/2)
-      # self.n_splits = len(X)
+      # self.n_splits = int(len(X)/2)
+      self.n_splits = len(X)
     kf = KFold(n_splits=self.n_splits, random_state=self.random_state, shuffle=True)
     cv_decoders = [copy.deepcopy(self.decoder) for i in range(self.n_splits)]
     x_test_all = []
@@ -724,13 +737,13 @@ class SVMandInsertionPenaltyTunedSVMProbDecoder():
     self.x_train_all = x_train_all
     self.y_train_all = y_train_all
     self.cv_decoders = cv_decoders
-    self.tune_SVM_params()
+    self.tune_SVM()
     self.tune_insertion_penalty()
     self.decoder = self.decoder.fit(X, y)
     self.n_splits = previous_n_splits
     return self
 
-  def tune_SVM_params(self):
+  def tune_SVM(self):
     x_test_all = self.x_test_all
     y_test_all = self.y_test_all
     x_train_all = self.x_train_all
@@ -739,29 +752,40 @@ class SVMandInsertionPenaltyTunedSVMProbDecoder():
     region_order = self.decoder.steps[-1][1].region_order
 
     def tune_SVM_for_r_i(r_i):
-      def SVM_cost(c_power, gamma_power):
+
+      def calculate_SVM_run_i_accuracy(x_train, y_train, x_test, y_test, decoder, c, gamma='scale'):
+        decoder.steps[-1][1].SVM_params[r_i] = {'C': c, 'gamma': gamma}
+        region_order = decoder.steps[-1][1].region_order
+        LETTERS_TO_DOT = decoder.steps[-1][1].LETTERS_TO_DOT
+        decoder.fit(x_train, y_train, SVMProbDecoder__r_i = r_i, SVMProbDecoder__probability = not self.tune_without_probability)
+        y_pred_trans_class = decoder.predict(x_test, svm_transition = True, r_i = r_i)
+        y_test_label_by_type = [[item[r_i] for item in run_i] for run_i in letter_label_to_transition_label(y_test, LETTERS_TO_DOT, region_order)]
+        accuracy = accuracy_score([item for run_i in y_test_label_by_type for item in run_i], [item for run_i in y_pred_trans_class for item in run_i])
+        return accuracy
+
+      def SVM_c_gamma_cost(c_power, gamma_power):
         c = 10 ** c_power
         gamma = 0.1 ** gamma_power
-
-        def calculate_SVM_run_i_accuracy(x_train, y_train, x_test, y_test, decoder):
-          decoder.steps[-1][1].SVM_params[r_i] = {'C': c, 'gamma':gamma}
-          region_order = decoder.steps[-1][1].region_order
-          LETTERS_TO_DOT = decoder.steps[-1][1].LETTERS_TO_DOT
-          decoder.fit(x_train, y_train)
-          prob = decoder.predict(x_test, svm_proba = True, r_i = r_i)
-          y_pred_trans_class = np.array([np.argmax(run_i, axis=1) for run_i in prob])
-          y_test_label_by_type = [[item[r_i] for item in run_i] for run_i in letter_label_to_transition_label(y_test, LETTERS_TO_DOT, region_order)]
-          accuracy = accuracy_score([item for run_i in y_test_label_by_type for item in run_i], [item for run_i in y_pred_trans_class for item in run_i])
-          return accuracy
-        acc_all_run = Parallel(n_jobs=self.each_fold_n_jobs)(delayed(calculate_SVM_run_i_accuracy) (x_train, y_train, x_test, y_test, decoder) for x_train, y_train, x_test, y_test, decoder in zip(x_train_all, y_train_all, x_test_all, y_test_all, cv_decoders) )
+        acc_all_run = Parallel(n_jobs=self.each_fold_n_jobs)(delayed(calculate_SVM_run_i_accuracy) (x_train, y_train, x_test, y_test, decoder, c, gamma) for x_train, y_train, x_test, y_test, decoder in zip(x_train_all, y_train_all, x_test_all, y_test_all, cv_decoders) )
         # acc_all_run = [calculate_SVM_run_i_accuracy(x_train, y_train, x_test, y_test, decoder) for x_train, y_train, x_test, y_test, decoder in zip(x_train_all, y_train_all, x_test_all, y_test_all, cv_decoders)]
         return -np.mean(acc_all_run)
-      res = dlib.find_min_global(SVM_cost, [self.C_power_range[0], self.gamma_power_range[0]], [self.C_power_range[1], self.gamma_power_range[1]], self.SVM_n_calls)
+
+      def SVM_c_cost(c_power):
+        c = 10 ** c_power
+        acc_all_run = Parallel(n_jobs=self.each_fold_n_jobs)(delayed(calculate_SVM_run_i_accuracy) (x_train, y_train, x_test, y_test, decoder, c) for x_train, y_train, x_test, y_test, decoder in zip(x_train_all, y_train_all, x_test_all, y_test_all, cv_decoders) )
+        return -np.mean(acc_all_run)
+
+      if self.tune_gamma:
+        res = dlib.find_min_global(SVM_c_gamma_cost, [self.C_power_range[0], self.gamma_power_range[0]], [self.C_power_range[1], self.gamma_power_range[1]], self.SVM_n_calls)
+      else:
+        res = dlib.find_min_global(SVM_c_cost, [self.C_power_range[0]], [self.C_power_range[1]], self.SVM_n_calls)
       return res
     svm_params_res = Parallel(n_jobs=-1)(delayed(tune_SVM_for_r_i)(i) for i in range(len(region_order)) )
 
-    # raise Exception('exit!')
-    SVM_params = [{'C': 10 ** res[0][0], 'gamma': 0.1 ** res[0][1]} for res in svm_params_res]
+    if self.tune_gamma:
+      SVM_params = [{'C': 10 ** res[0][0], 'gamma': 0.1 ** res[0][1]} for res in svm_params_res]
+    else:
+      SVM_params = [{'C': 10 ** res[0][0], 'gamma': 'scale'} for res in svm_params_res]
     print([(res[1], param) for res, param in zip(svm_params_res, SVM_params)])
     self.best_SVM_params = SVM_params
     self.decoder.steps[-1][1].SVM_params = SVM_params
@@ -769,7 +793,7 @@ class SVMandInsertionPenaltyTunedSVMProbDecoder():
       decoder.steps[-1][1].SVM_params = SVM_params
     def fit_each_fold_decoder(x_train, y_train, decoder):
       return decoder.fit(x_train, y_train)
-    cv_decoders = Parallel(n_jobs=-1)(delayed(fit_each_fold_decoder)(x_train, y_train, decoder) for x_train, y_train, decoder in zip(x_train_all, y_train_all, cv_decoders))
+    cv_decoders = Parallel(n_jobs=self.each_fold_n_jobs)(delayed(fit_each_fold_decoder)(x_train, y_train, decoder) for x_train, y_train, decoder in zip(x_train_all, y_train_all, cv_decoders))
     self.cv_decoders = cv_decoders
 
   def tune_insertion_penalty(self):
