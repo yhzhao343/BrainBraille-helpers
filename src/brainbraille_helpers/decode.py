@@ -1,12 +1,14 @@
 from .helpers import *
 from .glm import *
 from .HTK_Hmm import *
+from .numba_cc import cc
 import numpy as np
 from scipy.signal import butter, sosfilt
 from sklearn.model_selection import KFold
 from sklearn.metrics import accuracy_score
 from sklearn.svm import SVC
 from joblib import Parallel, delayed
+from numba import jit, prange
 import copy
 import dlib
 
@@ -320,39 +322,6 @@ def add_bigram_probabilities(letter_probs, bigram_prob_dict):
     correction = (prev_prob.reshape(prev_prob.size ,1) * bigram_correction_matrix).sum(axis=0)
     corrected_probs[i] = correction * curr_prob
   return [{l:prob for l, prob in zip(letter_list, corrected_prob)} for corrected_prob in corrected_probs]
-
-def letter_level_bigram_viterbi_decode(letter_probs, bigram_log_prob_dict):
-  # log(A*B) = log(A) + log(B);
-  # log(A+B) = logsumexp(log(A) + log(B))
-  # Check log(1+x) taylor series?
-  # Check how to use log(A) and log(B) to get log(A+B)?
-  letter_list = list(letter_probs[0].keys())
-  all_prob_vals = np.array([val for dict_i in bigram_log_prob_dict.values() for val in dict_i.values()])
-  default_prob = np.min(all_prob_vals[all_prob_vals < 0])
-  # bigram_log_prob_dict = {l: defaultdict(lambda: default_prob, bigram_log_prob_dict[l]) for l in letter_list}
-  # transition_log_prob_matrix = np.array([[bigram_log_prob_dict[prev_l][l] for l in letter_list] for prev_l in letter_list ])
-  transition_log_prob_matrix = np.array([[bigram_log_prob_dict[prev_l][l] if l in bigram_log_prob_dict[prev_l] else default_prob for l in letter_list] for prev_l in letter_list ], np.float64)
-  log_prob_table = np.log10( np.array([[l_prob[l] for l in letter_list] for l_prob in letter_probs]) ).T.astype(np.float64)
-  prev_table = np.zeros((log_prob_table.shape[0], log_prob_table.shape[1]-1), dtype=np.int32)
-  emission_log_prob_table = np.zeros(log_prob_table.shape)
-  emission_log_prob_table[:, 0] = log_prob_table[:, 0]
-  letter_list_array = np.ones((len(letter_list), 1))
-  for i in range(1, emission_log_prob_table.shape[1]):
-    prev_node_probs = (emission_log_prob_table[:, i-1] * letter_list_array).T
-    transition_correction = prev_node_probs + transition_log_prob_matrix
-    best = np.argmax(transition_correction, axis=0)
-    prev_table[:, i - 1] = best
-    best_transition = np.take_along_axis(transition_correction, np.expand_dims(best, axis=0), axis=0)
-    emission_log_prob_table[:, i] = best_transition + log_prob_table[:, i]
-
-  last_letter_log_prob = emission_log_prob_table[:, -1]
-  last_letter_index = np.argmax(last_letter_log_prob)
-  letter_index_array = np.zeros(emission_log_prob_table.shape[1], dtype=np.int32)
-  letter_index_array[-1] = last_letter_index
-  for i in range(prev_table.shape[1] - 1, -1, -1):
-    letter_index_array[i] = prev_table[letter_index_array[i+1]][i]
-  letters = [letter_list[l_i] for l_i in letter_index_array]
-  return letters
 
 def letter_bigram_viterbi_with_grammar_decode(letter_probs, bigram_log_prob_dict, grammar_node_symbols, grammar_link_start_end, dictionary, insert_panelty = 0, max_null_resolve_count = 3):
   letter_list, num_entry = list(letter_probs[0].keys()), len(letter_probs)
@@ -863,3 +832,50 @@ class SVMandInsertionPenaltyTunedSVMProbDecoder():
       for i in range(num_decoders):
         self.cv_decoders[i].steps[-1][1].words_dictionary = words_dictionary
       self.decoder.steps[-1][1].words_dictionary = words_dictionary
+
+def letter_level_bigram_viterbi_decode(letter_probs, bigram_log_prob_dict, letter_probs_is_log = False):
+  # log(A*B) = log(A) + log(B);
+  # log(A+B) = logsumexp(log(A) + log(B))
+  # Check log(1+x) taylor series?
+  # May need to Check how to use log(A) and log(B) to get log(A+B)? Maybe not
+  letter_list = list(letter_probs[0].keys())
+  num_frames = len(letter_probs)
+  num_letter = len(letter_list)
+  letter_to_index_dict = {l: i for i, l in enumerate(letter_list)}
+  letter_probs_array = np.array([[letter_prob[l] for l in letter_list] for letter_prob in letter_probs], dtype=np.float32)
+  bigram_log_trans_array = np.zeros((num_letter, num_letter), dtype=np.float32)
+  for prev_l, prev_next_dict in bigram_log_prob_dict.items():
+    for next_l, prob in prev_next_dict.items():
+      bigram_log_trans_array[letter_to_index_dict[prev_l]][letter_to_index_dict[next_l]] = prob
+  default_prob = np.min(bigram_log_trans_array[bigram_log_trans_array < 0])
+  bigram_log_trans_array[bigram_log_trans_array == 0] = default_prob
+  transition_log_prob_matrix = np.array([[bigram_log_prob_dict[prev_l][l] if l in bigram_log_prob_dict[prev_l] else default_prob for l in letter_list] for prev_l in letter_list ])
+  if not letter_probs_is_log:
+    letter_probs_array = np.log10(letter_probs_array)
+  letter_index_array = letter_level_bigram_viterbi_decode_numba_helper(letter_probs_array.T, bigram_log_trans_array)
+  letters = [letter_list[l_i] for l_i in letter_index_array]
+  return letters
+
+@cc.export('letter_level_bigram_viterbi_decode_numba_helper', '(f4[:,:], f4[:, :])')
+def letter_level_bigram_viterbi_decode_numba_helper(log_prob_table, bigram_log_trans_array):
+  prev_table = np.zeros((log_prob_table.shape[0], log_prob_table.shape[1]-1), dtype=np.int32)
+  emission_log_prob_table = np.zeros(log_prob_table.shape, dtype=np.float32)
+  emission_log_prob_table[:, 0] = log_prob_table[:, 0]
+  letter_list_array = np.ones((bigram_log_trans_array.shape[0], 1), dtype=np.float32)
+  for i in range(1, emission_log_prob_table.shape[1]):
+    prev_node_probs = (emission_log_prob_table[:, i-1] * letter_list_array).T
+    transition_correction = prev_node_probs + bigram_log_trans_array
+    best = np.argmax(transition_correction, axis=0).astype(np.int32)
+    prev_table[:, i - 1] = best
+    best_transition = np.zeros(best.size, dtype=np.float32)
+    for j, best_index in enumerate(best):
+      best_transition[j] = transition_correction[best_index, j]
+    emission_log_prob_table[:, i] = best_transition + log_prob_table[:, i]
+
+  last_letter_log_prob = emission_log_prob_table[:, -1]
+  last_letter_index = np.argmax(last_letter_log_prob)
+  letter_index_array = np.zeros(emission_log_prob_table.shape[1], dtype=np.int32)
+  letter_index_array[-1] = last_letter_index
+  for i in range(prev_table.shape[1] - 1, -1, -1):
+    letter_index_array[i] = prev_table[letter_index_array[i+1]][i]
+  return letter_index_array
