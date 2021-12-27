@@ -289,7 +289,7 @@ def scrub_motion_outliner(bold_image, mask, outlier_index):
           bold_image[x, y, z, outlier_index] = interpolated_vals
   return bold_image
 
-@jit(nopython=True, parallel=False, fastmath=True)
+@jit(nopython=True, parallel=False, fastmath=True, cache=True)
 def matmul_1d_mat1_batch_1d_mat2(mat1, mat2):
   # It seems numba can only speed this a little bit
   num_voxel = mat2.shape[0]
@@ -299,7 +299,7 @@ def matmul_1d_mat1_batch_1d_mat2(mat1, mat2):
     out[i, :] = mat1 @ mat2[i, :]
   return out
 
-@jit(nopython=True, parallel=False, fastmath=True)
+@jit(nopython=True, parallel=False, fastmath=True, cache=True)
 def matmul_1d_mat1_batch_2d_mat2(mat1, mat2):
   num_voxel = mat2.shape[0]
   out = np.zeros((num_voxel, mat1.shape[0], mat2.shape[2]), dtype=np.float32)
@@ -307,7 +307,7 @@ def matmul_1d_mat1_batch_2d_mat2(mat1, mat2):
     out[i] = mat1 @ mat2[i]
   return out
 
-@jit(nopython=True, parallel=False, fastmath=True)
+@jit(nopython=True, parallel=False, fastmath=True, cache=True)
 def matmul_2d_batch_1d_mat1_2d_mat2(mat1, mat2):
   num_voxel = mat1.shape[0]
   out = np.zeros((num_voxel, mat1.shape[1], mat2.shape[1]), dtype=np.float32)
@@ -316,7 +316,7 @@ def matmul_2d_batch_1d_mat1_2d_mat2(mat1, mat2):
     out[i] = mat1[i] @ mat2
   return out
 
-@jit(nopython=True, parallel=False, fastmath=True)
+@jit(nopython=True, parallel=False, fastmath=True, cache=True)
 def matdot_2d_batch_1d_mat1_1d_mat2(mat1, mat2):
   num_voxel = mat1.shape[0]
   out = np.zeros((num_voxel, mat1.shape[1]), dtype=np.float32)
@@ -340,7 +340,7 @@ def batch_AR_from_xcorr_using_Yule_Walker(xcorr):
     out[i,:] = scipy.linalg.solve_toeplitz(xcorr[i, :-1], -xcorr[i, 1:])
   return out
 
-@jit(nopython=True, parallel=False, fastmath=True)
+@jit(nopython=True, parallel=False, fastmath=True, cache=True)
 def batch_sse_from_xcorr_and_ar(xcorr, a):
   num_voxel = xcorr.shape[0]
   sse = np.zeros(num_voxel, dtype=np.float32)
@@ -348,7 +348,7 @@ def batch_sse_from_xcorr_and_ar(xcorr, a):
     sse[i] = xcorr[i, 0] - a[i, :] @ (-xcorr[i, 1:])
   return sse
 
-@jit(nopython=True, parallel=False, fastmath=True)
+@jit(nopython=True, parallel=False, fastmath=True, cache=True)
 def get_inv_v_from_ar(a, num_frame):
   ## make sure numba parallel is False! parallel=True hurts performance
   len_a = len(a)
@@ -364,7 +364,7 @@ def get_inv_v_from_ar(a, num_frame):
     iv[i, i-len_a:i] = xcorr_a
   return iv
 
-@jit(nopython=True, parallel=False, fastmath=True)
+@jit(nopython=True, parallel=False, fastmath=True, cache=True)
 def get_ar_filter_from_ar(a, num_frame):
   ## make sure numba parallel is False! parallel=True hurts performance
   len_a = len(a)
@@ -400,7 +400,7 @@ def batch_3d_convolve(image, kernel):
 #     df =
 #   e_var = np.zeros(num_voxel, dtype=np.float32)
 
-@jit(nopython=True, parallel=False, fastmath=True)
+@jit(nopython=True, parallel=False, fastmath=True, cache=True)
 def batch_prewhiten_re_estimates(a, regressors, bold_image, error):
   # Make sure for numba, parallel=False! parallel=True hurts performance
   # NOTE: cannot seperate this function to multiple steps, inv_v consumes huge RAM
@@ -426,7 +426,7 @@ def batch_prewhiten_re_estimates(a, regressors, bold_image, error):
     sse[voxel_i] = e_i.T @ inv_v @ e_i
   return inv_xt_iv_x_out, b, sse
 
-@jit(nopython=True, parallel=False, fastmath=True)
+@jit(nopython=True, parallel=False, fastmath=True, cache=True)
 def batch_prewhiten_re_estimates_no_sse(a, regressors, bold_image):
   num_voxel, ar_order = a.shape
   num_frame, num_regressor = regressors.shape
@@ -448,7 +448,7 @@ def batch_prewhiten_re_estimates_no_sse(a, regressors, bold_image):
 ## I think this Satterthwaite is wrong?
 ## the dof calculation is adopted from the canlabcore code, I think the r
 ## calculation is wrong! should use wy
-# @jit(nopython=True, parallel=False, fastmath=True)
+# @jit(nopython=True, parallel=False, fastmath=True, cache=True)
 # def batch_prewhiten_re_estimates_with_Satterthwaite(a, regressors, bold_image, error):
 #   # Make sure for numba, parallel=False! parallel=True hurts performance
 #   # NOTE: cannot seperate this function to multiple steps, inv_v consumes huge RAM
