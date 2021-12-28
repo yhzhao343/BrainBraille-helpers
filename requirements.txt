@@ -1,8 +1,8 @@
 nibabel
 templateflow
 scipy
-numpy
-numba
+numpy==1.20
+numba==0.54.1
 msgpack
 msgpack_numpy
 matplotlib
