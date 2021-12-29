@@ -432,7 +432,7 @@ class SVMProbDecoder():
       trans_class = res
     return trans_class
 
-  def predict(self, X, r_i=None, svm_predict = False, svm_transition=False, bigram_dict = None, words_node_symbols = None, words_link_start_end = None, words_dictionary = None, insertion_penalty = None, token_label=True):
+  def predict(self, X, r_i=None, svm_predict = False, svm_transition=False, bigram_dict = None, words_node_symbols = None, words_link_start_end = None, words_dictionary = None, insertion_penalty = None, token_label=True, skip_letter_viterbi=False):
     if svm_predict:
       return self.svm_predict(X, r_i, self.probability)
     if svm_transition:
@@ -447,6 +447,9 @@ class SVMProbDecoder():
       use_cache = False
       self.X_cache = X.copy()
     latest_results = None
+    ran_naive_prob_letter_label = False
+    ran_letter_viterbi_decode_letter_label = False
+    ran_grammar_viterbi_decode_letter_label = False
     if not use_cache:
       X_each_run_len = [len(x_i) for x_i in X]
       X_each_run_start_end = [(end - X_each_run_len[j] , end) for j, end in enumerate([np.sum(X_each_run_len[: (i + 1)]) for i in range(len(X_each_run_len))])]
@@ -476,48 +479,35 @@ class SVMProbDecoder():
       self.state_prob_by_type = (self.state_prob_by_type_1 + self.state_prob_by_type_2) / 2
       self.naive_letter_prob = [ [ {l: np.prod([val if l2d[r] else 1-val for r_i, r, val in zip(range(len(self.region_order)), self.region_order, e_i)]) for l, l2d in self.LETTERS_TO_DOT.items()} for e_i in run_i] for run_i in self.state_prob_by_type]
       self.naive_prob_letter_label = [[ key_of_max_val_in_dict(e_i) for e_i in run_i] for run_i in self.naive_letter_prob]
+      ran_naive_prob_letter_label = True
 
-    if self.naive_prob_letter_label is not None:
+    if ran_naive_prob_letter_label:
       latest_results = self.naive_prob_letter_label
 
-    if bigram_dict is not None:
-      if bigram_dict != self.bigram_dict:
-        use_cache = False
-        self.add_bigram_dict(bigram_dict)
+    bigram_dict = self.bigram_dict if bigram_dict is None else bigram_dict
+    bigram_log_dict = self.bigram_log_dict if bigram_dict is None else log_double_dict(copy.deepcopy(bigram_dict))
 
-    if (not use_cache) and (self.bigram_dict is not None):
-      self.bigram_weighted_prob = [add_bigram_probabilities(run_i, self.bigram_dict) for run_i in self.naive_letter_prob]
+    if (bigram_dict is not None) and (not skip_letter_viterbi):
+      self.bigram_weighted_prob = [add_bigram_probabilities(run_i, bigram_dict) for run_i in self.naive_letter_prob]
       self.bigram_weighted_letter_label = [[ key_of_max_val_in_dict(e_i) for e_i in run_i] for run_i in self.bigram_weighted_prob]
       self.letter_viterbi_decode_letter_label = [letter_level_bigram_viterbi_decode(run_i, self.bigram_log_dict) for run_i in self.naive_letter_prob]
-
-    if self.letter_viterbi_decode_letter_label is not None:
+      ran_letter_viterbi_decode_letter_label = True
+    if ran_letter_viterbi_decode_letter_label:
       latest_results = self.letter_viterbi_decode_letter_label
 
-    if words_node_symbols is not None :
-      if self.words_node_symbols != words_node_symbols:
-        use_cache = False
-        self.words_node_symbols = words_node_symbols
+    words_node_symbols = self.words_node_symbols if words_node_symbols is None else words_node_symbols
+    words_link_start_end = self.words_link_start_end if words_link_start_end is None else words_link_start_end
+    words_dictionary = self.words_dictionary if words_dictionary is None else words_dictionary
+    insertion_penalty = self.insertion_penalty if self.insertion_penalty == insertion_penalty else insertion_penalty
 
-    if words_link_start_end is not None:
-      if self.words_link_start_end != words_node_symbols:
-        use_cache = False
-        self.words_link_start_end = words_node_symbols
+    if (words_node_symbols is not None) and (words_link_start_end is not None) and (words_dictionary is not None):
+      self.grammar_viterbi_decode_letter_label = Parallel(n_jobs=-1)(delayed(letter_bigram_viterbi_with_grammar_decode)(run_i, bigram_log_dict, words_node_symbols, words_link_start_end, words_dictionary, insertion_penalty) for run_i in self.naive_letter_prob)
+      # self.grammar_viterbi_decode_letter_label = [letter_bigram_viterbi_with_grammar_decode(run_i, bigram_log_dict, self.words_node_symbols, self.words_link_start_end, self.words_dictionary, self.insertion_penalty) for run_i in self.naive_letter_prob]
+      ran_grammar_viterbi_decode_letter_label = True
 
-    if words_dictionary is not None:
-      if self.words_dictionary != words_dictionary:
-        use_cache = False
-        self.words_dictionary = words_dictionary
-
-    if insertion_penalty != self.insertion_penalty:
-      use_cache = False
-      self.insertion_penalty = insertion_penalty
-
-    if (self.words_node_symbols is not None) and (self.words_link_start_end is not None) and (self.words_dictionary is not None):
-      self.grammar_viterbi_decode_letter_label = Parallel(n_jobs=-1)(delayed(letter_bigram_viterbi_with_grammar_decode)(run_i, self.bigram_log_dict, self.words_node_symbols, self.words_link_start_end, self.words_dictionary, self.insertion_penalty) for run_i in self.naive_letter_prob)
-      # self.grammar_viterbi_decode_letter_label = [letter_bigram_viterbi_with_grammar_decode(run_i, self.bigram_log_dict, self.words_node_symbols, self.words_link_start_end, self.words_dictionary, self.insertion_penalty) for run_i in self.naive_letter_prob]
-
-    if self.grammar_viterbi_decode_letter_label is not None:
+    if ran_grammar_viterbi_decode_letter_label:
       latest_results = self.grammar_viterbi_decode_letter_label
+
     return latest_results
 
 class SVMandInsertionPenaltyTunedSVMProbDecoder():
@@ -634,7 +624,7 @@ class SVMandInsertionPenaltyTunedSVMProbDecoder():
     # print([len(decoder.steps[-1][1].word_dictionary.keys()) for decoder in cv_decoders])
     def insertion_penalty_cost(insertion_penalty):
       def calculate_run_i_insertion_accuracy(x_test, y_test, decoder):
-        y_pred = decoder.predict(x_test, insertion_penalty = insertion_penalty)
+        y_pred = decoder.predict(x_test, insertion_penalty = insertion_penalty, skip_letter_viterbi=True)
         return accuracy_score([l for run_i in y_test for l in run_i], [l for run_i in y_pred for l in run_i])
       acc_all_run = Parallel(n_jobs=-1)(delayed(calculate_run_i_insertion_accuracy) (x_test, y_test, decoder) for x_test, y_test, decoder in zip(x_test_all, y_test_all, cv_decoders))
       # acc_all_run = [calculate_run_i_insertion_accuracy(x_test, y_test, decoder) for x_test, y_test, decoder in zip(x_test_all, y_test_all, cv_decoders)]
