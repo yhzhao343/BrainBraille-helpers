@@ -189,7 +189,12 @@ class HTK_Hmm:
       state = state_str
     return state
 
-  def predict(self, X, x_sample_periods_ms=None, i_tokens_each_state = 3, n_best = 1, insertion_penalty = 0.0, token_label=True):
+  def predict(self, X, x_sample_periods_ms=None, i_tokens_each_state = 3, insertion_penalty = 0.0, token_label=True):
+    raw_result_mlf_content = self.predict_raw(X, x_sample_periods_ms=None, i_tokens_each_state=i_tokens_each_state, n_best = 1, insertion_penalty = insertion_penalty, token_label = token_label)
+    parsed_results = [self._parse_hvite_mlf_content(parsed_result) for parsed_result in raw_result_mlf_content]
+    return parsed_results
+
+  def predict_raw(self, X, x_sample_periods_ms=None, i_tokens_each_state = 4, n_best = 1, insertion_penalty = 0.0, token_label=True):
     len_X = len(X)
     predict_ext_file_path = [f'{self.predict_ext_path}/predict_sample_{i+1}' for i in range(len_X)]
     if x_sample_periods_ms is None:
@@ -202,12 +207,18 @@ class HTK_Hmm:
     write_file(self.fitted_hmm_model, self.fitted_hmm_model_path)
     self.predict_mlf_file_names = predict_mlf_file_names
     results = Parallel(n_jobs=self.num_cpu)(delayed(self._run_hvite)(input_data_x_file, output_file, i_tokens_each_state, n_best, insertion_penalty, token_label) for input_data_x_file, output_file in zip(predict_ext_file_names, predict_mlf_file_names))
-    parsed_results = Parallel(n_jobs=self.num_cpu)(delayed(self._parse_hvite_mlf)(name) for name in self.predict_mlf_file_names)
+    mlf_result_content = Parallel(n_jobs=self.num_cpu)(delayed(self._load_hvite_mlf)(name) for name in self.predict_mlf_file_names)
+    return mlf_result_content
 
-    return parsed_results
+  def _load_hvite_mlf(self, mlf_file_path):
+    mlf_content = load_file(mlf_file_path)
+    return mlf_content
 
   def _parse_hvite_mlf(self, mlf_file_path):
     mlf_content = load_file(mlf_file_path)
+    return [self.check_tied_state_to_state(l.split(' ')[2]) for l in mlf_content.split('\n')[2:-2]]
+
+  def _parse_hvite_mlf_content(self, mlf_content):
     return [self.check_tied_state_to_state(l.split(' ')[2]) for l in mlf_content.split('\n')[2:-2]]
 
   def _run_hvite(self, input_data_x_file, output_file, i_tokens_each_state = 3, n_best=1, insertion_penalty = 0.0, token_label=True):
