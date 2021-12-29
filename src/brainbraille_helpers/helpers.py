@@ -1,6 +1,7 @@
 import os
 import csv
 import json
+import numpy as np
 from scipy.signal import butter
 
 def write_file(file_content, file_path, flag='w+'):
@@ -81,3 +82,9 @@ def butterworth_lowpass(highcut, fs, order=4):
   high = highcut / nyq
   sos = butter(order, high, analog=False, btype='lowpass', output='sos')
   return sos
+
+def lognormalize(x, x_base=10):
+  scale = np.log(x_base) / np.log(np.e)
+  scaled_x = scale * x
+  a = np.logaddexp.reduce(scaled_x)
+  return np.exp(scaled_x - a)
