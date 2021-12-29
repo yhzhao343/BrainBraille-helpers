@@ -438,8 +438,6 @@ class SVMProbDecoder():
     if svm_transition:
       return self.predict_svm_transition(X, r_i, self.probability)
     X = np.array(X)
-    if insertion_penalty is None:
-      insertion_penalty = self.insertion_penalty
     has_cache = self.X_cache is not None
     if has_cache and np.allclose(X.flatten(), self.X_cache.flatten()):
       use_cache = True
