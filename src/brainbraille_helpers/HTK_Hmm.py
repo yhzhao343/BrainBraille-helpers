@@ -13,7 +13,7 @@ rng = default_rng(42)
 class HTK_Hmm:
   def __init__(self, temp_dir='/tmp/.gt2k_py', num_cpu=30, HTK_PATH=None,
                SRILM_PATH=None, num_states=3, skip=0, num_mixtures=1,
-               use_full_cov=False, label_time_period_ms=200,
+               use_full_cov=False, label_time_period_ms=600,
                init_HRest_min_var = 0.0001, init_HRest_num_iter = 40,
                init_HRest_min_samp=1, HCompV_min_var = 0.0001,
                bi_tri_phone_HERest_min_var = 0.0001,
@@ -198,7 +198,7 @@ class HTK_Hmm:
     len_X = len(X)
     predict_ext_file_path = [f'{self.predict_ext_path}/predict_sample_{i+1}' for i in range(len_X)]
     if x_sample_periods_ms is None:
-      x_sample_periods_ms = [x_i.shape[1] * self.sample_period_ms for x_i in X]
+      x_sample_periods_ms = [x_i.shape[0] * self.sample_period_ms for x_i in X]
     results = Parallel(n_jobs=self.num_cpu)(delayed(self._export_to_ext)(x, ext_file_path, sample_data_period_ms) for x, ext_file_path, sample_data_period_ms in zip(X, predict_ext_file_path, x_sample_periods_ms))
 
     predict_ext_file_names = [f'{path}.ext' for path in predict_ext_file_path]
