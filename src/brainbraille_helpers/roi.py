@@ -205,3 +205,21 @@ def extract_label_from_info(bold_info_processed_bold_info, LETTERS_TO_DOT=None):
         LETTERS_TO_DOT[l][e['trial_type']] = 1
   dot_labels = [LETTERS_TO_DOT[l] for l in letter_labels]
   return {'dot_labels': dot_labels, 'letter_labels': letter_labels}
+
+def get_LETTERS_TO_DOT_from_processed_info(processed_bold_info):
+  events = processed_bold_info['event_tsv_content']
+  regressor_types = processed_bold_info['regressor_types']
+  letter_labels = [event['letter'] for i, event in enumerate(events) if (i > 0 and (event['onset'] != events[i - 1]['onset'])) or i == 0]
+  letter_labels = [l if l != '_' else ' ' for l in letter_labels]
+  # transition_letter_labels = [f'{l}{letter_labels[i + 1]}' for i, l in enumerate(letter_labels[:-1])]
+  letters = np.unique(letter_labels)
+  LETTERS_TO_DOT = {l: {regressor: 0 for regressor in regressor_types} for l in letters}
+  letter_time_dict = {}
+  for e in events:
+    l = ' ' if e['letter'] == '_' else e['letter']
+    t = int(e['onset'])
+    if l not in letter_time_dict:
+      letter_time_dict[l] = t
+    if (letter_time_dict[l] == t) and (e['trial_type'] in regressor_types):
+      LETTERS_TO_DOT[l][e['trial_type']] = 1
+  return LETTERS_TO_DOT
