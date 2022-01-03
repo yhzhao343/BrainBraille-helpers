@@ -91,6 +91,8 @@ class HTK_Hmm:
     self.bi_tri_phone_tied_HERest_t_i = bi_tri_phone_tied_HERest_t_i
     self.bi_tri_phone_tied_HERest_t_l = bi_tri_phone_tied_HERest_t_l
     self.add_monophone_back = add_monophone_back
+    self.num_X_frames_per_y_label = None
+    self.is_naive_grammar = True
 
     self.bi_tri_phone_edcmd = bi_tri_phone_edcmd if isinstance(bi_tri_phone_edcmd, str) else None
     if self.bi_tri_phone_edcmd is not None:
@@ -141,6 +143,7 @@ class HTK_Hmm:
     if isinstance(grammar_string, str):
       self.grammar_string = f'{grammar_string.rstrip()}\n'
       write_file(self.grammar_string, self.grammar_path)
+      self.is_naive_grammar = False
     else:
       self.grammar_string = None
 
@@ -190,8 +193,18 @@ class HTK_Hmm:
     return state
 
   def predict(self, X, x_sample_periods_ms=None, i_tokens_each_state = 3, insertion_penalty = 0.0, token_label=True):
+    is_naive_label_model = (self.bi_tri_phone_edcmd is None) and (not self.use_tied_states) and (self.is_naive_grammar)
+    if is_naive_label_model:
+      y_labels_per_run = [int(x_i.shape[0] / self.num_X_frames_per_y_label) for x_i in X]
+      y_each_run_start_end = [(end - y_labels_per_run[j] , end) for j, end in enumerate([np.sum(y_labels_per_run[: (i + 1)]) for i in range(len(y_labels_per_run))])]
+      X = np.vstack(X)
+      num_y_labels = int(X.shape[0] / self.num_X_frames_per_y_label)
+      X = X.reshape((num_y_labels, self.num_X_frames_per_y_label, X.shape[1]))
+
     raw_result_mlf_content = self.predict_raw(X, x_sample_periods_ms=None, i_tokens_each_state=i_tokens_each_state, n_best = 1, insertion_penalty = insertion_penalty, token_label = token_label)
     parsed_results = [self._parse_hvite_mlf_content(parsed_result) for parsed_result in raw_result_mlf_content]
+    if is_naive_label_model:
+      parsed_results = [[j for i in parsed_results[start:end] for j in i] for start, end in y_each_run_start_end]
     return parsed_results
 
   def predict_raw(self, X, x_sample_periods_ms=None, i_tokens_each_state = 4, n_best = 1, insertion_penalty = 0.0, token_label=True):
@@ -252,6 +265,11 @@ class HTK_Hmm:
     self.vec_size = X[0].shape[1]
     self.tokens = sorted(np.unique([label for sent in y for label in sent]))
     write_file(''.join([f'{tok}\n' for tok in self.tokens]), self.tokens_path)
+    if (self.bi_tri_phone_edcmd is None) and (not self.use_tied_states) and (self.is_naive_grammar):
+      X = np.vstack(X)
+      y = [[l] for y_run_i in y for l in y_run_i]
+      self.num_X_frames_per_y_label = int(X.shape[0] / len(y))
+      X = X.reshape((len(y), self.num_X_frames_per_y_label, X.shape[1]))
     if self.dict_string is None:
       self.dict_string = ''.join([f'{tok} {tok}\n' for tok in self.tokens])
       write_file(self.dict_string, self.dict_path)
