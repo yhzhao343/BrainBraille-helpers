@@ -12,27 +12,28 @@ import copy
 import dlib
 
 class HTKHMMDecoder():
-  def __init__(self, dict_string, grammar_string, add_monophone_back=False, insertion_penalty=0, num_states=None):
+  def __init__(self, dict_string, grammar_string, bi_tri_phone_edcmd='WB _space_\nTC', use_tied_states = True, add_monophone_back=False, insertion_penalty=0, num_states=None):
     self.dict_string = dict_string
     self.grammar_string = grammar_string
-    self.insertion_penalty = insertion_penalty
+    self.bi_tri_phone_edcmd = bi_tri_phone_edcmd
+    self.use_tied_states = use_tied_states
     self.add_monophone_back = add_monophone_back
+    self.insertion_penalty = insertion_penalty
     self.num_states = num_states
+
 
 
   def fit(self, X, y, insertion_penalty = None):
     if insertion_penalty is not None:
       self.insertion_penalty = insertion_penalty
-    if self.num_states is None:
-      num_states = int(np.array(X).shape[1] / np.array(y).shape[1])
-    else:
-      num_states = self.num_states
+    num_states = int(np.array(X).shape[1] / np.array(y).shape[1]) if self.num_states is None else self.num_states
     y = [[l if l != ' ' else '_space_' for l in y_i] for y_i in y]
+
     self.clf = HTK_Hmm(
                 num_states = num_states,
-                bi_tri_phone_edcmd = 'WB _space_\nTC',
+                bi_tri_phone_edcmd = self.bi_tri_phone_edcmd,
                 skip = 0,
-                use_tied_states = True,
+                use_tied_states = self.use_tied_states,
                 add_monophone_back = self.add_monophone_back,
                 dict_string = self.dict_string,
                 grammar_string = self.grammar_string,
