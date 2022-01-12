@@ -167,7 +167,8 @@ class InsertionPenaltyTunedHTKDecoder():
     if self.n_splits is None:
       self.n_splits = len(X)
     kf = KFold(n_splits=self.n_splits, random_state=self.random_state, shuffle=True)
-    cv_decoders = [copy.deepcopy(self.decoder) for i in range(self.n_splits)]
+    # cv_decoders = [copy.deepcopy(self.decoder) for i in range(self.n_splits)]
+    cv_decoders = []
     x_test_all = []
     y_test_all = []
     x_train_all = []
@@ -178,16 +179,23 @@ class InsertionPenaltyTunedHTKDecoder():
       y_train_i = [y[i] for i in train_i]
       x_test_i = [X[i] for i in test_i]
       y_test_i = [y[i] for i in test_i]
-      x_test_all.append(x_test_i)
-      y_test_all.append(y_test_i)
-      x_train_all.append(x_train_i)
-      y_train_all.append(y_train_i)
-      decoder_i = cv_decoders[i]
+      decoder_i = copy.deepcopy(self.decoder)
+      decoder_i_is_valid = True
       for step_name, step_obj in decoder_i.steps:
         if step_name == 'ZNormalizeBySub':
           step_obj.y_subjects = step_obj.x_subjects[test_i]
           step_obj.x_subjects = step_obj.x_subjects[train_i]
-          step_obj.fit(x_train_i)
+          for y_subjects_i in step_obj.y_subjects:
+            if y_subjects_i not in step_obj.x_subjects:
+              decoder_i_is_valid = False
+              continue
+            step_obj.fit(x_train_i)
+      if decoder_i_is_valid:
+        x_test_all.append(x_test_i)
+        y_test_all.append(y_test_i)
+        x_train_all.append(x_train_i)
+        y_train_all.append(y_train_i)
+        cv_decoders.append(decoder_i)
 
     def train(decoder, x, y):
       return decoder.fit(x, y)
@@ -205,8 +213,9 @@ class InsertionPenaltyTunedHTKDecoder():
       # print(f'insertion panelty: {param:.4f} acc: {acc:.4f}')
       return -acc
     # trained_cv_decoders = Parallel(n_jobs=-1)(delayed(train) (decoder, x, y) for decoder, x, y in zip(cv_decoders, x_train_all, y_train_all))
-    res = dlib.find_min_global(cost, [self.insertion_penalty_range[0]], [self.insertion_penalty_range[1]], self.n_calls)
-    self.best_insertion_penalty = res[0][0]
+    if self.n_calls > 0:
+      res = dlib.find_min_global(cost, [self.insertion_penalty_range[0]], [self.insertion_penalty_range[1]], self.n_calls)
+      self.best_insertion_penalty = res[0][0]
     self.decoder = self.decoder.fit(X, y)
     self.n_splits = previous_n_splits
     return self
@@ -529,36 +538,44 @@ class SVMandInsertionPenaltyTunedSVMProbDecoder():
       # self.n_splits = int(len(X)/2)
       self.n_splits = len(X)
     kf = KFold(n_splits=self.n_splits, random_state=self.random_state, shuffle=True)
-    cv_decoders = [copy.deepcopy(self.decoder) for i in range(self.n_splits)]
+    cv_decoders = []
     x_test_all = []
     y_test_all = []
     x_train_all = []
     y_train_all = []
     for i, train_test_i in enumerate(kf.split(X)):
       train_i, test_i = train_test_i
-      # print(train_i, test_i)
       x_train_i = [X[i] for i in train_i]
       y_train_i = [y[i] for i in train_i]
       x_test_i = [X[i] for i in test_i]
       y_test_i = [y[i] for i in test_i]
-      x_test_all.append(x_test_i)
-      y_test_all.append(y_test_i)
-      x_train_all.append(x_train_i)
-      y_train_all.append(y_train_i)
-      decoder_i = cv_decoders[i]
+      decoder_i = copy.deepcopy(self.decoder)
+      decoder_i_is_valid = True
       for step_name, step_obj in decoder_i.steps:
         if step_name == 'ZNormalizeBySub':
           step_obj.y_subjects = step_obj.x_subjects[test_i]
           step_obj.x_subjects = step_obj.x_subjects[train_i]
-          step_obj.fit(x_train_i)
+          for y_subjects_i in step_obj.y_subjects:
+            if y_subjects_i not in step_obj.x_subjects:
+              decoder_i_is_valid = False
+              continue
+            step_obj.fit(x_train_i)
+      if decoder_i_is_valid:
+        x_test_all.append(x_test_i)
+        y_test_all.append(y_test_i)
+        x_train_all.append(x_train_i)
+        y_train_all.append(y_train_i)
+        cv_decoders.append(decoder_i)
 
     self.x_test_all = x_test_all
     self.y_test_all = y_test_all
     self.x_train_all = x_train_all
     self.y_train_all = y_train_all
     self.cv_decoders = cv_decoders
-    self.tune_SVM()
-    self.tune_insertion_penalty()
+    if self.SVM_n_calls > 0:
+      self.tune_SVM()
+    if self.insertion_n_calls > 0:
+      self.tune_insertion_penalty()
     self.decoder = self.decoder.fit(X, y)
     self.n_splits = previous_n_splits
     return self
