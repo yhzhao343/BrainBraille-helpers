@@ -4,7 +4,7 @@ from .HTK_Hmm import *
 import numpy as np
 from scipy.signal import butter, sosfilt
 from sklearn.model_selection import KFold
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.svm import SVC
 from joblib import Parallel, delayed
 from numba import jit, prange, types, njit
@@ -161,6 +161,7 @@ class InsertionPenaltyTunedHTKDecoder():
     self.n_splits = n_splits
     self.n_calls = n_calls
     self.best_insertion_penalty = 0
+    self.cm = None
 
   def fit(self, X, y):
     previous_n_splits = self.n_splits
@@ -213,9 +214,25 @@ class InsertionPenaltyTunedHTKDecoder():
       # print(f'insertion panelty: {param:.4f} acc: {acc:.4f}')
       return -acc
     # trained_cv_decoders = Parallel(n_jobs=-1)(delayed(train) (decoder, x, y) for decoder, x, y in zip(cv_decoders, x_train_all, y_train_all))
+
+    def get_decoder_letter_confusion_matrix(decoder, x, y, insertion_penalty):
+      res = decoder.predict(x, insertion_penalty = insertion_penalty)
+      if len(res[0]) != len(y[0]):
+        return 0
+      y_letters = [l for run in y for l in run]
+      letter_labels = np.sort(np.unique(y_letters))
+      return confusion_matrix(y_letters, [l for run in res for l in run], labels=letter_labels)
+
+    def get_cv_letter_confusion_matrix(param):
+      # cm = np.sum(Parallel(n_jobs=-1)(delayed(get_decoder_letter_confusion_matrix)(decoder, x, y, param) for decoder, x, y in zip(trained_cv_decoders, x_test_all, y_test_all)), axis=0)
+      cm = np.array([get_decoder_letter_confusion_matrix(decoder, x, y, param) for decoder, x, y in zip(trained_cv_decoders, x_test_all, y_test_all)]).sum(axis=0)
+      return cm
+
     if self.n_calls > 0:
       res = dlib.find_min_global(cost, [self.insertion_penalty_range[0]], [self.insertion_penalty_range[1]], self.n_calls)
       self.best_insertion_penalty = res[0][0]
+
+    self.cm = get_cv_letter_confusion_matrix(self.best_insertion_penalty)
     self.decoder = self.decoder.fit(X, y)
     self.n_splits = previous_n_splits
     return self
@@ -394,6 +411,7 @@ class SVMProbDecoder():
 
   def fit(self, X, y=None, r_i=None, probability=True):
     # transition_label = self.letter_label_to_transition_label(y)
+    self.X_cache = None
     self.probability = probability
     transition_label = letter_label_to_transition_label(y, self.LETTERS_TO_DOT, self.region_order)
     transition_label = np.array([entry for run in transition_label for entry in run])
@@ -442,7 +460,7 @@ class SVMProbDecoder():
       trans_class = res
     return trans_class
 
-  def predict(self, X, r_i=None, svm_predict = False, svm_transition=False, bigram_dict = None, words_node_symbols = None, words_link_start_end = None, words_dictionary = None, insertion_penalty = None, token_label=True, skip_letter_viterbi=False):
+  def predict(self, X, r_i=None, svm_predict = False, svm_transition=False, bigram_dict = None, words_node_symbols = None, words_link_start_end = None, words_dictionary = None, insertion_penalty = None, token_label=True, skip_letter_viterbi=False, skip_grammar_viterbi=False):
     if svm_predict:
       return self.svm_predict(X, r_i, self.probability)
     if svm_transition:
@@ -455,9 +473,9 @@ class SVMProbDecoder():
       use_cache = False
       self.X_cache = X.copy()
     latest_results = None
-    ran_naive_prob_letter_label = False
-    ran_letter_viterbi_decode_letter_label = False
-    ran_grammar_viterbi_decode_letter_label = False
+    finished_naive_prob_letter_label = False
+    finished_letter_viterbi_decode_letter_label = False
+    finished_grammar_viterbi_decode_letter_label = False
     if not use_cache:
       X_each_run_len = [len(x_i) for x_i in X]
       X_each_run_start_end = [(end - X_each_run_len[j] , end) for j, end in enumerate([np.sum(X_each_run_len[: (i + 1)]) for i in range(len(X_each_run_len))])]
@@ -487,9 +505,9 @@ class SVMProbDecoder():
       self.state_prob_by_type = (self.state_prob_by_type_1 + self.state_prob_by_type_2) / 2
       self.naive_letter_prob = [ [ {l: np.prod([val if l2d[r] else 1-val for r_i, r, val in zip(range(len(self.region_order)), self.region_order, e_i)]) for l, l2d in self.LETTERS_TO_DOT.items()} for e_i in run_i] for run_i in self.state_prob_by_type]
       self.naive_prob_letter_label = [[ key_of_max_val_in_dict(e_i) for e_i in run_i] for run_i in self.naive_letter_prob]
-      ran_naive_prob_letter_label = True
+      finished_naive_prob_letter_label = True
 
-    if ran_naive_prob_letter_label:
+    if finished_naive_prob_letter_label:
       latest_results = self.naive_prob_letter_label
 
     bigram_dict = self.bigram_dict if bigram_dict is None else bigram_dict
@@ -499,8 +517,8 @@ class SVMProbDecoder():
       self.bigram_weighted_prob = [add_bigram_probabilities(run_i, bigram_dict) for run_i in self.naive_letter_prob]
       self.bigram_weighted_letter_label = [[ key_of_max_val_in_dict(e_i) for e_i in run_i] for run_i in self.bigram_weighted_prob]
       self.letter_viterbi_decode_letter_label = [letter_level_bigram_viterbi_decode(run_i, self.bigram_log_dict) for run_i in self.naive_letter_prob]
-      ran_letter_viterbi_decode_letter_label = True
-    if ran_letter_viterbi_decode_letter_label:
+      finished_letter_viterbi_decode_letter_label = True
+    if finished_letter_viterbi_decode_letter_label:
       latest_results = self.letter_viterbi_decode_letter_label
 
     words_node_symbols = self.words_node_symbols if words_node_symbols is None else words_node_symbols
@@ -508,12 +526,12 @@ class SVMProbDecoder():
     words_dictionary = self.words_dictionary if words_dictionary is None else words_dictionary
     insertion_penalty = self.insertion_penalty if self.insertion_penalty == insertion_penalty else insertion_penalty
 
-    if (words_node_symbols is not None) and (words_link_start_end is not None) and (words_dictionary is not None):
+    if (not skip_grammar_viterbi) and (words_node_symbols is not None) and (words_link_start_end is not None) and (words_dictionary is not None):
       self.grammar_viterbi_decode_letter_label = Parallel(n_jobs=-1)(delayed(letter_bigram_viterbi_with_grammar_decode)(run_i, bigram_log_dict, words_node_symbols, words_link_start_end, words_dictionary, insertion_penalty) for run_i in self.naive_letter_prob)
       # self.grammar_viterbi_decode_letter_label = [letter_bigram_viterbi_with_grammar_decode(run_i, bigram_log_dict, self.words_node_symbols, self.words_link_start_end, self.words_dictionary, self.insertion_penalty) for run_i in self.naive_letter_prob]
-      ran_grammar_viterbi_decode_letter_label = True
+      finished_grammar_viterbi_decode_letter_label = True
 
-    if ran_grammar_viterbi_decode_letter_label:
+    if finished_grammar_viterbi_decode_letter_label:
       latest_results = self.grammar_viterbi_decode_letter_label
 
     return latest_results
@@ -531,8 +549,12 @@ class SVMandInsertionPenaltyTunedSVMProbDecoder():
     self.each_fold_n_jobs = each_fold_n_jobs
     self.tune_gamma = tune_gamma
     self.tune_without_probability = tune_without_probability
+    self.best_SVM_params = None
+    self.naive_cm = None
+    self.letter_viterbi_cm = None
+    self.best_insertion_penalty = 0
 
-  def fit(self, X, y):
+  def fit(self, X, y, calculate_cm=True):
     previous_n_splits = self.n_splits
     if self.n_splits is None:
       # self.n_splits = int(len(X)/2)
@@ -574,11 +596,57 @@ class SVMandInsertionPenaltyTunedSVMProbDecoder():
     self.cv_decoders = cv_decoders
     if self.SVM_n_calls > 0:
       self.tune_SVM()
+
+    if calculate_cm and (self.best_SVM_params is not None):
+      self.naive_cm = self.obtain_naive_cm()
+
     if self.insertion_n_calls > 0:
       self.tune_insertion_penalty()
     self.decoder = self.decoder.fit(X, y)
     self.n_splits = previous_n_splits
     return self
+
+  def obtain_naive_cm(self):
+    x_test_all = self.x_test_all
+    y_test_all = self.y_test_all
+    x_train_all = self.x_train_all
+    y_train_all = self.y_train_all
+    cv_decoders = self.cv_decoders
+
+    def get_decoder_letter_confusion_matrix(x_train, y_train, x_test, y_test, decoder, SVM_params):
+      y_unique_labels = np.sort(np.unique([l for run in y_train for l in run]))
+      decoder.steps[-1][1].SVM_params = SVM_params
+      decoder.fit(x_train, y_train)
+      decoder.predict(x_test, skip_letter_viterbi=True, skip_grammar_viterbi=True)
+      naive_pred_y = decoder.steps[-1][1].naive_prob_letter_label
+      return confusion_matrix([l for run in y_test for l in run], [l for run in naive_pred_y for l in run], labels = y_unique_labels)
+
+    def get_cv_letter_confusion_matrix(SVM_params):
+      naive_cm = Parallel(n_jobs=self.each_fold_n_jobs)(delayed(get_decoder_letter_confusion_matrix) (x_train, y_train, x_test, y_test, decoder, SVM_params) for x_train, y_train, x_test, y_test, decoder in zip(x_train_all, y_train_all, x_test_all, y_test_all, cv_decoders) )
+      return np.sum(naive_cm, axis=0)
+
+    return get_cv_letter_confusion_matrix(self.best_SVM_params)
+
+  def obtain_letter_viterbi_cm(self, bigram_dict):
+    x_test_all = self.x_test_all
+    y_test_all = self.y_test_all
+    x_train_all = self.x_train_all
+    y_train_all = self.y_train_all
+    cv_decoders = self.cv_decoders
+    self.set_grammar_related(bigram_prob_dict = bigram_dict)
+
+    def get_decoder_letter_confusion_matrix(x_train, y_train, x_test, y_test, decoder, SVM_params):
+      y_unique_labels = np.sort(np.unique([l for run in y_train for l in run]))
+      decoder.steps[-1][1].SVM_params = SVM_params
+      decoder.predict(x_test, skip_grammar_viterbi=True)
+      naive_pred_y = decoder.steps[-1][1].letter_viterbi_decode_letter_label
+      return confusion_matrix([l for run in y_test for l in run], [l for run in naive_pred_y for l in run], labels = y_unique_labels)
+
+    def get_cv_letter_confusion_matrix(SVM_params):
+      naive_cm = Parallel(n_jobs=self.each_fold_n_jobs)(delayed(get_decoder_letter_confusion_matrix) (x_train, y_train, x_test, y_test, decoder, SVM_params) for x_train, y_train, x_test, y_test, decoder in zip(x_train_all, y_train_all, x_test_all, y_test_all, cv_decoders) )
+      return np.sum(naive_cm, axis=0)
+
+    return get_cv_letter_confusion_matrix(self.best_SVM_params)
 
   def tune_SVM(self):
     x_test_all = self.x_test_all
@@ -663,8 +731,8 @@ class SVMandInsertionPenaltyTunedSVMProbDecoder():
   def get_region_order(self):
     return self.decoder.steps[-1][1].region_order
 
-  def get_prob_letter_label(self):
-    return self.decoder.steps[-1][1].naive_prob_letter_label
+  # def get_prob_letter_label(self):
+    # return self.decoder.steps[-1][1].naive_prob_letter_label
 
   def get_bigram_weighted_letter_label(self):
     return self.decoder.steps[-1][1].bigram_weighted_letter_label

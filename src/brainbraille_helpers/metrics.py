@@ -112,8 +112,6 @@ def tok_corr(label, pred):
   n = len(label)
   return (n - delete - substitute) / n
 
-
-
 def hresult_style_pprint(label, minimum_edit_dist_result, confusion_mat, labels, default_max_label_len=5):
   (dist, hit, delete, substitute, insert) = minimum_edit_dist_result
   max_label_len = np.max([len(l) for l in labels])
