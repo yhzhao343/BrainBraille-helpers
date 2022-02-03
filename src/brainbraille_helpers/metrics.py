@@ -10,6 +10,26 @@ def letter_label_to_word_label(letters_list):
       word_lists.append(l)
   return word_lists
 
+def naive_information_transfer_per_selection(N, P):
+  return np.log2(N) + P * np.log2(P) + (1 - P) * np.log2((1 - P) / (N - 1))
+
+def information_transfer_per_selection(prior, cm, X = None, Y = None):
+  # based on: https://www.sciencedirect.com/science/article/pii/S1746809419301880?via%3Dihub
+  normalized_cm = normalize_confusion_matrix(cm)
+  select_options = sorted(prior.keys())
+  X = select_options if X is None else X
+  Y = select_options if X is None else Y
+  letters_to_ind = {l:i for i,l in enumerate(select_options)}
+  M = len(Y)
+  N = len(X)
+  prior_X = [prior[x_i] for x_i in X]
+  HY = np.sum([prior_X[i] * normalized_cm[letters_to_ind[Y[j]]][letters_to_ind[X[i]]] * np.log2(normalized_cm[letters_to_ind[Y[j]]][letters_to_ind[X[i]]]) if (normalized_cm[letters_to_ind[Y[j]]][letters_to_ind[X[i]]] != 0.0) else 0 for j in range(M) for i in range(N)])
+  HYX = 0
+  for j in range(M):
+    s = np.sum([prior_X[i] * normalized_cm[letters_to_ind[Y[j]]][letters_to_ind[X[i]]] for i in range(N)])
+    HYX += s * np.log2(s)
+  return HY - HYX
+
 def min_edit_dist(label, pred, delete_weight = 7, substitute_weight = 10, insert_weight = 7, tie_break = (1, 0, 2), style='htk'):
   # The tie_break parameter is an tuple. The content of the tuple is index to
   # the array of actions [delete, sub, insert]. The order denotes priority
