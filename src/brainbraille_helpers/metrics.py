@@ -1,4 +1,5 @@
 import numpy as np
+from .helpers import *
 
 def letter_label_to_word_label(letters_list):
   word_lists = [letters_list[0]]
