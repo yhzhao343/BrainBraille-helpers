@@ -88,3 +88,6 @@ def lognormalize(x, x_base=10):
   scaled_x = scale * x
   a = np.logaddexp.reduce(scaled_x)
   return np.exp(scaled_x - a)
+
+def normalize_confusion_matrix(cm):
+  return cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
