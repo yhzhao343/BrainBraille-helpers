@@ -19,7 +19,7 @@ def information_transfer_per_selection(prior, cm, X = None, Y = None):
   normalized_cm = normalize_confusion_matrix(cm)
   select_options = sorted(prior.keys())
   X = select_options if X is None else X
-  Y = select_options if X is None else Y
+  Y = select_options if Y is None else Y
   letters_to_ind = {l:i for i,l in enumerate(select_options)}
   M = len(Y)
   N = len(X)
