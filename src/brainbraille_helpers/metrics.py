@@ -1,5 +1,16 @@
 import numpy as np
 from .helpers import *
+from sklearn.metrics import classification_report
+
+def classification_report_from_confusion_matrix(cm):
+  y_true, y_pred = confusion_matrix_to_y_true_and_y_pred(cm)
+  return classification_report(y_true, y_pred)
+
+def confusion_matrix_to_y_true_and_y_pred(cm):
+  y_counts_for_each = np.array(cm).sum(axis=1)
+  y_true = np.concatenate([[i] * counts for i, counts in enumerate(y_counts_for_each)])
+  y_pred = np.concatenate([[j] * cm[i, j] for i in range(cm.shape[0]) for j in range(cm.shape[1])])
+  return y_true, y_pred
 
 def letter_label_to_word_label(letters_list):
   word_lists = [letters_list[0]]
@@ -133,6 +144,7 @@ def tok_corr(label, pred):
   (dist, hit, delete, substitute, insert) = w
   n = len(label)
   return (n - delete - substitute) / n
+
 
 def hresult_style_pprint(label, minimum_edit_dist_result, confusion_mat, labels, default_max_label_len=5):
   (dist, hit, delete, substitute, insert) = minimum_edit_dist_result
