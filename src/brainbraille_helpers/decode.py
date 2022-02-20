@@ -98,6 +98,8 @@ class ZNormalizeBySub():
     self.x_subjects = np.array(x_subjects)
     self.y_subjects = np.array(y_subjects)
     self.z_norm_params_by_sub = {}
+    self.default_mean = None
+    self.default_std  = None
 
   def fit(self, X, y=None):
     X = np.array(X)
@@ -112,6 +114,8 @@ class ZNormalizeBySub():
       X_sub_mean = X_sub.mean(axis=(0,1))
       X_sub_std  = X_sub.std(axis =(0,1))
       self.z_norm_params_by_sub[sub_i] = {'mean': X_sub_mean, 'std':X_sub_std}
+    self.default_mean = np.mean([e['mean'] for e in self.z_norm_params_by_sub.values()])
+    self.default_std  = np.linalg.norm([e['std'] for e in self.z_norm_params_by_sub.values()])
     X = np.array(X)
     if np.allclose(X.shape, self.X.shape):
       if np.allclose(X, self.X):
@@ -125,8 +129,15 @@ class ZNormalizeBySub():
       for sub_i in unique_y_subjects:
         sub_mask = self.y_subjects == sub_i
         X_sub = X[sub_mask, :]
-        X[sub_mask, :] = (X[sub_mask, :] - self.z_norm_params_by_sub[sub_i]['mean']) / self.z_norm_params_by_sub[sub_i]['std']
+        if sub_i in self.z_norm_params_by_sub:
+          X[sub_mask, :] = (X[sub_mask, :] - self.z_norm_params_by_sub[sub_i]['mean']) / self.z_norm_params_by_sub[sub_i]['std']
+        else:
+          X[sub_mask, :] = (X[sub_mask, :] - self.default_mean) / self.default_std
     return X
+
+  def fit_transform(self, X, y=None):
+    self.fit(X)
+    return self.transform(X)
 
 def parseLatticeString(latticeString):
   lines = latticeString.split('\n')
