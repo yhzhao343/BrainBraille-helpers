@@ -11,9 +11,9 @@ from numpy.random import default_rng
 rng = default_rng(42)
 
 class HTK_Hmm:
-  def __init__(self, temp_dir='/tmp/.gt2k_py', num_cpu=30, HTK_PATH=None,
+  def __init__(self, temp_dir='/tmp/.gt2k_py', num_cpu=None, HTK_PATH=None,
                SRILM_PATH=None, num_states=3, skip=0, num_mixtures=1,
-               use_full_cov=False, label_time_period_ms=600,
+               use_full_cov=False, custom_hmm_def_obj=None, label_time_period_ms=600,
                init_HRest_min_var = 0.0001, init_HRest_num_iter = 40,
                init_HRest_min_samp=1, HCompV_min_var = 0.0001,
                bi_tri_phone_HERest_min_var = 0.0001,
@@ -44,7 +44,7 @@ class HTK_Hmm:
     t = str(datetime.datetime.now()).replace(':', '_').replace(' ', '_')
     self.temp_path = f'{temp_dir.rstrip()}/{t}-{str(rng.random())[2:]}'
     os.makedirs(self.temp_path)
-    self.num_cpu = num_cpu if num_cpu is not None else mp.cpu_count() - 1
+    self.num_cpu = num_cpu if num_cpu is not None else os.cpu_count() - 1
     self.HTK_PATH = HTK_PATH if HTK_PATH is not None else os.environ.get('HTK_PATH')
     self.SRILM_PATH = SRILM_PATH if SRILM_PATH is not None else os.environ.get('SRILM_PATH')
     self.num_states= num_states + 2
@@ -52,6 +52,7 @@ class HTK_Hmm:
     self.skip = skip
     self.num_mixtures =  num_mixtures
     self.use_full_cov = use_full_cov
+    self.custom_hmm_def_obj = custom_hmm_def_obj
     self.tokens_path = f'{self.temp_path}/tokens'
     self.init_hmm_path = f'{self.temp_path}/init_hmm'
     self.hmm0_path = f'{self.temp_path}/hmm.0'
@@ -192,9 +193,10 @@ class HTK_Hmm:
       state = state_str
     return state
 
-  def predict(self, X, x_sample_periods_ms=None, i_tokens_each_state = 3, insertion_penalty = 0.0, token_label=True):
+  def predict(self, X, x_sample_periods_ms=None, i_tokens_each_state = 3, insertion_penalty = 0.0, token_label=True, frame_per_label_is_fixed=False):
+    X = np.array([np.array(x_i) for x_i in X])
     is_naive_label_model = (self.bi_tri_phone_edcmd is None) and (not self.use_tied_states) and (self.is_naive_grammar)
-    if is_naive_label_model:
+    if is_naive_label_model and frame_per_label_is_fixed:
       y_labels_per_run = [int(x_i.shape[0] / self.num_X_frames_per_y_label) for x_i in X]
       y_each_run_start_end = [(end - y_labels_per_run[j] , end) for j, end in enumerate([np.sum(y_labels_per_run[: (i + 1)]) for i in range(len(y_labels_per_run))])]
       X = np.vstack(X)
@@ -203,7 +205,7 @@ class HTK_Hmm:
 
     raw_result_mlf_content = self.predict_raw(X, x_sample_periods_ms=None, i_tokens_each_state=i_tokens_each_state, n_best = 1, insertion_penalty = insertion_penalty, token_label = token_label)
     parsed_results = [self._parse_hvite_mlf_content(parsed_result) for parsed_result in raw_result_mlf_content]
-    if is_naive_label_model:
+    if is_naive_label_model and frame_per_label_is_fixed:
       parsed_results = [[j for i in parsed_results[start:end] for j in i] for start, end in y_each_run_start_end]
     return parsed_results
 
@@ -257,7 +259,7 @@ class HTK_Hmm:
     # print('----------')
     # print(str(res.stdout))
 
-  def fit(self, X, y, y_timestamp=None):
+  def fit(self, X, y, y_timestamp=None, frame_per_label_is_fixed=False):
     # print((len(X), len(y)), (X[0].shape, len(y[0])))
     if len(X) != len(y):
       raise Exception('X and y input length does not match')
@@ -265,7 +267,7 @@ class HTK_Hmm:
     self.vec_size = X[0].shape[1]
     self.tokens = sorted(np.unique([label for sent in y for label in sent]))
     write_file(''.join([f'{tok}\n' for tok in self.tokens]), self.tokens_path)
-    if (self.bi_tri_phone_edcmd is None) and (not self.use_tied_states) and (self.is_naive_grammar):
+    if (self.bi_tri_phone_edcmd is None) and (not self.use_tied_states) and (self.is_naive_grammar) and frame_per_label_is_fixed:
       X = np.vstack(X)
       y = [[l] for y_run_i in y for l in y_run_i]
       self.num_X_frames_per_y_label = int(X.shape[0] / len(y))
@@ -281,7 +283,7 @@ class HTK_Hmm:
     if self.word_lattice_string is None:
       self._hmm_gen_word_lattice_from_grammar()
 
-    default_htk_hmm_obj = self._gen_htk_hmm_obj(self.num_states, self.vec_size, self.skip, self.num_mixtures, self.use_full_cov)
+    default_htk_hmm_obj = self._gen_htk_hmm_obj(self.num_states, self.vec_size, self.skip, self.num_mixtures, self.use_full_cov) if (self.custom_hmm_def_obj is None) else self.custom_hmm_def_obj
     default_htk_hmm_def_string = self._hmm_def_2_hmm_str(default_htk_hmm_obj)
     token_htk_def_string_dict = {t: default_htk_hmm_def_string for t in self.tokens}
     # Override default simple hmm def with custom defination if provided
