@@ -1062,7 +1062,7 @@ def glm_with_ar(
         )
         # This is assuming inv(V) is I, so the variance for each sample is
         # assumed to be the same
-        sse = e.T @ e
+        sse = np.sum(e * e, axis=1)
         # return inv_xtx_xt, b, sse
         return np.stack([inv_xtx] * time_series.shape[-1]), b, None, sse
     else:  # ar_order is positive and integer or ar_parameters are supplied
@@ -1456,11 +1456,11 @@ def glm_with_ar_simplified(
     e = time_series.T - y_fit
 
     if (ar_order == 0):
-        print(
-            'Why would you even do AR=0? '
-            'Be a good person and model the error autocorrelation!'
-        )
-        sse = e.T @ e
+        # print(
+        #     'Why would you even do AR=0? '
+        #     'Be a good person and model the error autocorrelation!'
+        # )
+        sse = np.sum(e * e, axis=1)
         return np.stack([inv_xtx] * time_series.shape[-1]), b, None, sse
     else:
         xcorr = batch_xcorr(e, ar_order)
